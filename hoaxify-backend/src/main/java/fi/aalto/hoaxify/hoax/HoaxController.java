@@ -1,0 +1,90 @@
+package fi.aalto.hoaxify.hoax;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import javax.validation.Valid;
+
+import fi.aalto.hoaxify.hoax.vm.HoaxVM;
+import fi.aalto.hoaxify.shared.CurrentUser;
+import fi.aalto.hoaxify.shared.GenericResponse;
+import fi.aalto.hoaxify.user.User;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/1.0")
+public class HoaxController {
+
+	HoaxService hoaxService;
+
+	public HoaxController(HoaxService hoaxService) {
+		this.hoaxService = hoaxService;
+	}
+
+	@PostMapping("/hoaxes")
+    HoaxVM createHoax(@Valid @RequestBody Hoax hoax, @CurrentUser User user) {
+		return new HoaxVM(hoaxService.save(user, hoax));
+	}
+	
+	@GetMapping("/hoaxes")
+	Page<HoaxVM> getAllHoaxes(Pageable pageable) {
+		return hoaxService.getAllHoaxes(pageable).map(HoaxVM::new);
+	}
+	
+	@GetMapping("/users/{username}/hoaxes")
+	Page<HoaxVM> getHoaxesOfUser(@PathVariable String username, Pageable pageable) {
+		return hoaxService.getHoaxesOfUser(username, pageable).map(HoaxVM::new);
+	}
+
+	/**
+	 * If the direction is "after", meaning to get the Hoaxes after the specified one, in that case, the Pageable object will be used to
+	 * get Hoaxes of specified size and the returned type is Page. Yet, if "before" is used, all the new Hoaxes before the specified one
+	 * will be returned and the returned type will be List. To adapt these two cases, the ResponseEntity type will be returned to hold
+	 * these two different possible types.
+	 * @param id
+	 * @param username
+	 * @param pageable Holder the params used for paging
+	 * @param direction Specify to fetch the Hoaxes before or after the passed one
+	 * @param count Specify whether return the number of newly added Hoaxes
+	 * @return
+	 */
+	@GetMapping({"/hoaxes/{id:[0-9]+}", "/users/{username}/hoaxes/{id:[0-9]+}"}) 
+	ResponseEntity<?> getHoaxesRelative(
+			@PathVariable long id,
+			@PathVariable(required=false) String username, Pageable pageable,
+			@RequestParam(name="direction", defaultValue="after") String direction,
+			@RequestParam(name="count", defaultValue="false", required=false) boolean count) {
+		if(!direction.equalsIgnoreCase("after")) {			
+			return ResponseEntity.ok(hoaxService.getOldHoaxes(id, username, pageable).map(HoaxVM::new));
+		}
+		
+		if(count) {
+			long newHoaxCount = hoaxService.getNewHoaxesCount(id, username);
+			return ResponseEntity.ok(Collections.singletonMap("count", newHoaxCount));
+		}
+		
+		List<HoaxVM> newHoaxes = hoaxService.getNewHoaxes(id, username, pageable).stream().map(HoaxVM::new).collect(Collectors.toList());
+		return ResponseEntity.ok(newHoaxes);
+	}
+	
+	@DeleteMapping("/hoaxes/{id:[0-9]+}")
+	@PreAuthorize("@hoaxSecurityService.isAllowedToDelete(#id, principal)")
+    GenericResponse deleteHoax(@PathVariable long id) {
+		hoaxService.deleteHoax(id);
+		return new GenericResponse("Hoax is removed");
+	}
+
+}
